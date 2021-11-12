@@ -493,25 +493,29 @@ static bool
 server_connect_to(struct server *server, struct server_info *info) {
     assert(server->tunnel_enabled);
 
+    sc_socket server_socket = server->server_socket;
     sc_socket video_socket = SC_INVALID_SOCKET;
     sc_socket control_socket = SC_INVALID_SOCKET;
     if (!server->tunnel_forward) {
-        video_socket = net_accept(server->server_socket);
+        video_socket = net_accept(server_socket);
         if (video_socket == SC_INVALID_SOCKET) {
             goto fail;
         }
 
-        control_socket = net_accept(server->server_socket);
+        control_socket = net_accept(server_socket);
         if (control_socket == SC_INVALID_SOCKET) {
             goto fail;
         }
 
-        // we don't need the server socket anymore
-        if (!net_close(server->server_socket)) {
+        sc_mutex_lock(&server->mutex);
+        // Do not attempt to interrupt it from another thread
+        server->server_socket = SC_INVALID_SOCKET;
+        sc_mutex_unlock(&server->mutex);
+
+        // We don't need the server socket anymore
+        if (!net_close(server_socket)) {
             LOGW("Could not close server socket on connect");
         }
-        // Do not attempt to close it again on server_destroy()
-        server->server_socket = SC_INVALID_SOCKET;
     } else {
         uint32_t attempts = 100;
         sc_tick delay = SC_TICK_FROM_MS(100);
@@ -572,14 +576,21 @@ static void
 server_on_terminated(void *userdata) {
     struct server *server = userdata;
 
-    // No need for synchronization, server_socket is initialized before the
-    // observer thread is created.
+    // The server_socket is initialized before the observer thread is created,
+    // so the synchronization is not needed to see the initial value. However,
+    // the server socket is closed as soon as it is not useful anymore, and the
+    // synchronization is necessary to ensure that the socket is not closed
+    // before it is interrupted here.
+    sc_mutex_lock(&server->mutex);
+
     if (server->server_socket != SC_INVALID_SOCKET) {
         // If the server process dies before connecting to the server socket,
         // then the client will be stuck forever on accept(). To avoid the
         // problem, wake up the accept() call when the server dies.
         net_interrupt(server->server_socket);
     }
+
+    sc_mutex_unlock(&server->mutex);
 
     server->cbs->on_disconnected(server, server->cbs_userdata);
 

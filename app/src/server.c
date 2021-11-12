@@ -507,15 +507,12 @@ server_connect_to(struct server *server, struct server_info *info) {
             goto fail;
         }
 
-        sc_mutex_lock(&server->mutex);
-        // Do not attempt to interrupt it from another thread
-        server->server_socket = SC_INVALID_SOCKET;
-        sc_mutex_unlock(&server->mutex);
-
         // We don't need the server socket anymore
         if (!net_close(server_socket)) {
             LOGW("Could not close server socket on connect");
         }
+
+        // server_socket is never used anymore
     } else {
         uint32_t attempts = 100;
         sc_tick delay = SC_TICK_FROM_MS(100);
@@ -576,21 +573,11 @@ static void
 server_on_terminated(void *userdata) {
     struct server *server = userdata;
 
-    // The server_socket is initialized before the observer thread is created,
-    // so the synchronization is not needed to see the initial value. However,
-    // the server socket is closed as soon as it is not useful anymore, and the
-    // synchronization is necessary to ensure that the socket is not closed
-    // before it is interrupted here.
-    sc_mutex_lock(&server->mutex);
-
-    if (server->server_socket != SC_INVALID_SOCKET) {
-        // If the server process dies before connecting to the server socket,
-        // then the client will be stuck forever on accept(). To avoid the
-        // problem, wake up the accept() call when the server dies.
-        net_interrupt(server->server_socket);
-    }
-
-    sc_mutex_unlock(&server->mutex);
+    // If the server process dies before connecting to the server socket,
+    // then the client will be stuck forever on accept(). To avoid the problem,
+    // wake up the accept() call (or any other) when the server dies, like on
+    // stop() (it is safe to call interrupt() twice).
+    sc_intr_interrupt(&server->intr);
 
     server->cbs->on_disconnected(server, server->cbs_userdata);
 

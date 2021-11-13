@@ -1,6 +1,8 @@
 # scrcpy (v1.19)
 
-<img src="data/icon.svg" width="128" height="128" alt="scrcpy" align="right" />
+<a href="data/icon.svg">
+  <img src="data/icon.svg" width="128" height="128" alt="scrcpy" align="right" />
+</a>
 
 [Read in another language](#translations)
 
